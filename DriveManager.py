@@ -1,3 +1,6 @@
+from typing import List
+
+
 class DriveManager:
     def __init__(self, crap):
         ...
@@ -12,4 +15,10 @@ class DriveManager:
         ...
 
     def write(self, file_name: str, file_contents: str) -> None:
+        ...
+
+    def delete(self, file_name: str) -> None:
+        ...
+
+    def list_files(self) -> List[str]:
         ...

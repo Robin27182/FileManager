@@ -1,14 +1,17 @@
-from dataclasses import fields
 from enum import Enum, auto
 from pathlib import Path
-import os
-import shutil
-import platform
 from typing import List
 
 from DriveManager import DriveManager
 from FileFormat import FileFormat
 from FileInterpreter import FileInterpreter
+
+
+class SaveMode(Enum):
+    drive_only = auto()
+    local_only = auto()
+    drive_and_local = auto()
+
 
 class FileManager:
     """
@@ -18,8 +21,7 @@ class FileManager:
     2. if a file exists in Google Drive and not Locally (or vice versa), raise an error. (Only if both are being used)
     3. if the mode is drive_only, all passed files are strings
     """
-    #TODO Implement base_dir's None ness
-    def __init__(self,interpreter: FileInterpreter, base_dir: str | Path = None, drive_manager: DriveManager = None, drive_only: bool = False) -> None:
+    def __init__(self,interpreter: FileInterpreter, base_dir: str | Path = None, drive_manager: DriveManager = None) -> None:
         """
         :param interpreter: A FileInterpreter instance for reading and writing for specific scenarios
         :param drive_manager: An optional instance of DriveManager, just to upload copies to one's Google Drive
@@ -31,14 +33,16 @@ class FileManager:
         self.save_mode: SaveMode = None
 
         # Logic can be simplified, but it's easier to read like this
-        if drive_manager is None and drive_only is True:
-            raise TypeError("Cannot only use drive if drive is None")
-        elif drive_manager is None and drive_only is False:
-            self.save_mode = SaveMode.local_only
-        elif drive_manager is not None and drive_only is True:
-            self.save_mode = SaveMode.drive_only
-        elif drive_manager is not None and drive_only is False:
+        local = base_dir is not None
+        drive = drive_manager is not None
+        if drive and local:
             self.save_mode = SaveMode.drive_and_local
+        elif drive:
+            self.save_mode = SaveMode.drive_only
+        elif local:
+            self.save_mode = SaveMode.local_only
+        else:
+            raise Exception("You need to pass either a base_dir or drive_manager instance to save files.")
 
         # This next part is for some sanitization; replace bad characters with weird stuff that we understand.
         self.replacements = {
@@ -52,10 +56,9 @@ class FileManager:
             '?': '_q_',
             '*': '_star_'
         }
+        if drive and not self.base_dir.is_dir():
+            raise TypeError("The base directory given is not a valid directory")
 
-
-        if not self.base_dir.is_dir():
-            raise TypeError("The file given is not a valid directory")
 
 
     def _sanitize_file_name(self, file_name: str | Path) -> str:
@@ -71,10 +74,7 @@ class FileManager:
 
         if isinstance(file_name, str):
             path = Path(file_name)
-            if path.suffix == required_ext:
-                stem = path.stem # We are adding the extension later, lets remove it to not have .txt.txt
-            else:
-                stem = path.name # Just doesnt have the extension
+            stem = path.stem if path.suffix == self.interpreter.extension else path.name
 
         elif isinstance(file_name, Path):
             stem = file_name.stem
@@ -105,6 +105,23 @@ class FileManager:
         return file
 
 
+    def _check_contents(self, file: str | Path, give_error = True) -> bool:
+        if self.save_mode is not SaveMode.drive_and_local: # Unrelated to give_error because this is a big issue
+            raise FileNotFoundError("Tried to match the file contents of local and Google Drive, but one does not exist")
+
+        file: Path = self._to_path(file)
+
+        google_contents = self.drive_manager.read(file.name)
+        local_contents = file.read_text()
+
+        if local_contents != google_contents:
+            if give_error:
+                raise Exception(f"File mismatch: {file} differs between local and Drive copies.")
+            else:
+                return False
+        return True
+
+
     def _exist(self, file: str | Path, give_error = True, sanitize = True) -> bool:
         """Gives an error for non-existing files unless give_error is False. Returns a boolean if the files exist"""
         if sanitize:
@@ -133,59 +150,9 @@ class FileManager:
             raise FileNotFoundError(f"File {file} does not exist")
         return exist
 
-
     def exist(self, file: str | Path, give_error = True) -> bool:
         """Gives an error for non-existing files unless give_error is False. Returns a boolean if the files exist"""
         return self._exist(file, give_error=give_error, sanitize=True) # True, because we are scared of what the user gives
-
-
-    def _read_raw(self, file: str | Path) -> str:
-        """
-        We are trusting that the file exists and that the file is a string in drive_only
-        These checks should be dealt with in a slightly higher-level function
-        """
-        contents: str = None
-
-        match self.save_mode:
-            case SaveMode.drive_only:
-                contents = self.drive_manager.read(file)
-
-            case SaveMode.local_only:
-                file: Path = self._to_path(file)
-                with open(file, "r") as f:
-                    contents = f.read()
-
-            case SaveMode.drive_and_local:
-                file: Path = self._to_path(file)
-                google_contents = self.drive_manager.read(file.name)
-
-                with open(file, "r") as f:
-                    local_contents = f.read()
-
-                if local_contents != google_contents:
-                    raise Exception(f"File mismatch: {file} differs between local and Drive copies.")
-
-                contents = local_contents
-        return contents
-
-
-    def _write_raw(self, file: str | Path, file_contents: str) -> None:
-        """
-        We are trusting that the file exists and that the file is a string in drive_only
-        These checks should be dealt with in a slightly higher-level function
-        """
-        match self.save_mode:
-            case SaveMode.drive_only:
-                self.drive_manager.write(file, file_contents)
-
-            case SaveMode.local_only:
-                file_path: Path = self._to_path(file)
-                file_path.write_text(file_contents)
-
-            case SaveMode.drive_and_local:
-                file_path: Path = self._to_path(file)
-                self.drive_manager.write(file, file_contents)
-                file_path.write_text(file_contents)
 
 
     def _create(self, file_name: str, sanitize = True) -> None:
@@ -209,11 +176,52 @@ class FileManager:
                 path: Path = self.base_dir / file_name
                 path.touch()
 
-
-    def create(self, file_name: str): # Does not accept a Path because you should not have a path that doesn't exist
+    def create(self, file_name: str) -> None: # Does not accept a Path because you should not have a path that doesn't exist
         """Creates a file, makes sure it doesn't exist."""
         self._create(file_name, sanitize=True) # True, because we are scared of what the user gives
 
+
+    def _delete(self, file: str | Path, check_exists=True, sanitize=True) -> None:
+        if sanitize:
+            file: str = self._sanitize_file_name(file)
+        if check_exists:
+            self._exist(file, give_error=True, sanitize=False)
+
+        match self.save_mode:
+            case SaveMode.drive_only:
+                self.drive_manager.delete(file)
+
+            case SaveMode.local_only:
+                file: Path = self._to_path(file)
+                file.unlink(missing_ok=False)
+
+            case SaveMode.drive_and_local:
+                file: Path = self._to_path(file)
+                self.drive_manager.delete(file.name)
+                file.unlink(missing_ok=False)
+
+    def delete(self, file: str | Path) -> None:
+        self._delete(file, check_exists=True, sanitize=True)
+
+
+    def _read_raw(self, file: str | Path) -> str:
+        """
+        We are trusting that the file exists and that the file is a string in drive_only
+        These checks should be dealt with in a slightly higher-level function
+        """
+        contents: str = None
+
+        match self.save_mode:
+            case SaveMode.drive_only:
+                contents = self.drive_manager.read(file)
+
+            case SaveMode.local_only:
+                contents = self._to_path(file).read_text()
+
+            case SaveMode.drive_and_local:
+                self._check_contents(file) # Checks if contents match
+                contents = self._to_path(file).read_text() # Doesn't matter if we use the Google Drive either.
+        return contents
 
     def _read(self, file: str | Path, check_exists = True, sanitize = True) -> FileFormat:
         """A more-specific version of self.read, we just don't want to check/sanitize unnecessarily"""
@@ -227,12 +235,29 @@ class FileManager:
         formatted: FileFormat = self.interpreter.read(contents)
         return formatted
 
-
     def read(self, file: str | Path) -> FileFormat:
         return self._read(file, check_exists=True, sanitize=True) # True, because we are scared of what the user gives
 
 
-    def _write(self, file: str | Path, formatted: FileFormat, create_if_none = False, sanitize = True):
+    def _write_raw(self, file: str | Path, file_contents: str) -> None:
+        """
+        We are trusting that the file exists and that the file is a string in drive_only
+        These checks should be dealt with in a slightly higher-level function
+        """
+        match self.save_mode:
+            case SaveMode.drive_only:
+                self.drive_manager.write(file, file_contents)
+
+            case SaveMode.local_only:
+                file_path: Path = self._to_path(file)
+                file_path.write_text(file_contents)
+
+            case SaveMode.drive_and_local:
+                file_path: Path = self._to_path(file)
+                self.drive_manager.write(file, file_contents)
+                file_path.write_text(file_contents)
+
+    def _write(self, file: str | Path, formatted: FileFormat, create_if_none = False, sanitize = True) -> None:
         """Does not have a check_exists because that is what create_if_none inherently does."""
         if sanitize:
             file: str = self._sanitize_file_name(file)
@@ -245,27 +270,39 @@ class FileManager:
         contents = self.interpreter.write(formatted)
         self._write_raw(file, contents)
 
-
     def write(self, file: str | Path, formatted: FileFormat, create_if_none = False) -> None:
         self._write(file, formatted, create_if_none, sanitize=True)
 
+
     def _list_files(self) -> List[str]:
-        ...
+        files: List[str] = []
+        match self.save_mode:
+            case SaveMode.drive_only:
+                files = self.drive_manager.list_files()
+
+            case SaveMode.local_only:
+                files = [f.name for f in self.base_dir.iterdir() if f.is_file()]
+
+            case SaveMode.drive_and_local:
+                drive_files = self.drive_manager.list_files()
+                local_files = [f.name for f in self.base_dir.iterdir() if f.is_file()]
+                # Checks galore incoming
+                if len(drive_files) != len(local_files):
+                    raise Exception("There is not an equal amount of files in both areas.")
+                for file in local_files:
+                    if file not in drive_files:
+                        raise FileNotFoundError(f"Could not find file \"{file}\" in drive files, but it was  found in local files.")
+                    self._check_contents(file)
+                files = local_files # Doesn't matter which
+        return files
 
     def list_file_contents(self) -> List[FileFormat]:
         """
         Does not list file names, because the user should never interact with file names.
         All the user is intended to do is give and take FileFormats.
         """
-        match self.save_mode:
-            case SaveMode.drive_only:
-                ...
-
-    def delete(self):
-        ...
-
-
-class SaveMode(Enum):
-    drive_only = auto()
-    local_only = auto()
-    drive_and_local = auto()
+        file_contents: List[FileFormat] = []
+        files: List[str] = self._list_files()
+        for file in files:
+            file_contents.append(self._read(file, check_exists=False, sanitize=False))
+        return file_contents
