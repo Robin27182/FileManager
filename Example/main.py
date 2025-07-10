@@ -30,9 +30,9 @@ async def main():
 
     test_data = TestFormat(info1="s", info2=3, info3=[1,2,"H"])
 
-    for i in range(len("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890!@#$%^&*()")):
-        await file_manager.write("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890!@#$%^&*()"[i], test_data, True)
-        test_data_revived: TestFormat = await file_manager.read("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890!@#$%^&*()"[i])
+    for i in range(len("abcdefghijklmnopqrstuvwxyz1234567890!@#$%^&*()")):
+        await file_manager.write("abcdefghijklmnopqrstuvwxyz1234567890!@#$%^&*()"[i], test_data, True)
+        test_data_revived: TestFormat = await file_manager.read("abcdefghijklmnopqrstuvwxyz1234567890!@#$%^&*()"[i])
 
     time.sleep(10)
     for i in range(len("abcdefghijklmnopqrstuvwxyz1234567890!@#$%^&*()")):
