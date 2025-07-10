@@ -6,7 +6,7 @@ import shutil
 import platform
 from typing import final
 
-from FileFormat import FileFormat
+from CoreFunction.FileFormatABC import FileFormat
 
 
 class FileInterpreter(ABC):

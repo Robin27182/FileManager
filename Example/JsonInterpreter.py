@@ -1,7 +1,7 @@
 import json
 from dataclasses import fields
 
-from FileInterpreter import FileInterpreter
+from CoreFunction.FileInterpreterABC import FileInterpreter
 from TestFormat import TestFormat
 
 

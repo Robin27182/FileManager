@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import List, Any
 
-from FileFormat import FileFormat
+from CoreFunction.FileFormatABC import FileFormat
 
 @dataclass
 class TestFormat(FileFormat):
